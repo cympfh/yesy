@@ -75,7 +75,9 @@ yesy start --listen 127.0.0.1 --port 8080
 
 ## WSL のパス
 
-WSL では、たとえば `/home/user/note.txt` の検索結果に `\\wsl.localhost\Ubuntu\home\user\note.txt` を併記します。Windows のブラウザでは、このパスが `file:` URL のリンクになります。ブラウザやセキュリティ設定によっては、HTTP ページから `file:` URL を開く操作が制限される場合があります。
+WSL では、たとえば `/home/user/note.txt` の検索結果に `\\wsl.localhost\Ubuntu\home\user\note.txt` を併記します。`/mnt/c`、`/mnt/d`、`/mnt/e`、`/mnt/f` 以下のファイルは、UNC パスよりも `C:\`、`D:\`、`E:\`、`F:\` から始まる Windows のドライブパスを優先します。
+
+各パスの右にあるクリップボードアイコンをクリックすると、そのパスをコピーできます。Windows のパスは、エクスプローラーのアドレスバーに貼り付けて開けます。Windows のブラウザでは、HTTP ページから `file:` URL を直接開く操作が制限されるためです。
 
 ## 開発
 

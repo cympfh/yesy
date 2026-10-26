@@ -34,19 +34,31 @@ function render(data) {
   results.replaceChildren();
   for (const result of data.results) {
     const item = template.content.cloneNode(true);
-    appendHighlightedText(item.querySelector('h2'), fileName(result.path), data.query);
+    const name = fileName(result.path);
+    appendHighlightedText(item.querySelector('h2'), name, data.query);
+    const preview = item.querySelector('.image-preview');
+    if (result.image_url) {
+      preview.src = result.image_url;
+      preview.alt = `Preview of ${name}`;
+      preview.hidden = false;
+      preview.addEventListener('error', () => preview.remove(), { once: true });
+    } else {
+      preview.remove();
+    }
     const snippet = item.querySelector('.snippet');
     if (result.snippet) {
       appendHighlightedText(snippet, result.snippet, data.query);
     } else {
       snippet.remove();
     }
-    item.querySelector('.linux-row code').textContent = result.path;
+    const linuxRow = item.querySelector('.linux-row');
+    linuxRow.querySelector('code').textContent = result.path;
+    linuxRow.querySelector('.copy-path').dataset.path = result.path;
     const windowsRow = item.querySelector('.windows-row');
     if (result.windows_path && result.windows_url) {
-      const link = windowsRow.querySelector('a');
-      link.href = result.windows_url;
-      link.querySelector('code').textContent = result.windows_path;
+      windowsRow.querySelector('a').href = result.windows_url;
+      windowsRow.querySelector('code').textContent = result.windows_path;
+      windowsRow.querySelector('.copy-path').dataset.path = result.windows_path;
     } else {
       windowsRow.remove();
     }
@@ -58,11 +70,46 @@ function render(data) {
     : `${count}${count === 100 ? '+' : ''} ${count === 1 ? 'file' : 'files'} found for “${data.query}”.`;
 }
 
+async function copyText(text) {
+  if (navigator.clipboard?.writeText) {
+    await navigator.clipboard.writeText(text);
+    return;
+  }
+  const textarea = document.createElement('textarea');
+  textarea.value = text;
+  textarea.style.position = 'fixed';
+  textarea.style.opacity = '0';
+  document.body.append(textarea);
+  textarea.select();
+  const copied = document.execCommand('copy');
+  textarea.remove();
+  if (!copied) throw new Error('Copy failed.');
+}
+
+results.addEventListener('click', async (event) => {
+  const button = event.target.closest('.copy-path');
+  if (!button) return;
+  const feedback = button.closest('.path-row').querySelector('.copy-feedback');
+  try {
+    await copyText(button.dataset.path);
+    feedback.textContent = 'Copied.';
+  } catch {
+    feedback.textContent = 'Copy failed. Select the path and copy it manually.';
+  }
+});
+
 async function search() {
   const query = input.value.trim();
+  const url = new URL(location.href);
+  if (query) {
+    url.searchParams.set('q', query);
+  } else {
+    url.searchParams.delete('q');
+  }
+  history.replaceState(null, '', url);
   if (!query) {
     results.replaceChildren();
-    status.textContent = 'Search the files indexed by yesy.';
+    status.textContent = '';
     return;
   }
   controller?.abort();
