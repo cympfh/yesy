@@ -347,6 +347,34 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn searches_all_keywords_separated_by_whitespace() {
+        let (file, database) = test_database();
+        database
+            .connection
+            .execute_batch(
+                "INSERT INTO documents(path, content) VALUES
+                    ('/home/user/both.txt', 'alpha text and beta text'),
+                    ('/home/user/alpha.txt', 'alpha text only');",
+            )
+            .unwrap();
+        drop(database);
+        let response = router(file.path().to_owned(), None)
+            .oneshot(
+                Request::get("/api/search?q=alpha%20%E3%80%80%20beta")
+                    .body(Body::empty())
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+
+        assert_eq!(response.status(), StatusCode::OK);
+        let body = response.into_body().collect().await.unwrap().to_bytes();
+        let body: serde_json::Value = serde_json::from_slice(&body).unwrap();
+        assert_eq!(body["results"].as_array().unwrap().len(), 1);
+        assert_eq!(body["results"][0]["path"], "/home/user/both.txt");
+    }
+
+    #[tokio::test]
     async fn serves_windows_drive_paths_as_json() {
         let (file, database) = test_database();
         database.connection.execute(

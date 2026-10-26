@@ -7,7 +7,7 @@ use std::{
     time::Duration,
 };
 
-use rusqlite::{Connection, OpenFlags, params};
+use rusqlite::{Connection, OpenFlags, params, types::Value};
 use serde::Serialize;
 
 #[derive(Debug)]
@@ -98,14 +98,18 @@ impl Database {
     }
 
     pub fn search(&self, query: &str, limit: usize) -> anyhow::Result<Vec<SearchResult>> {
-        let query = query.trim();
-        if query.is_empty() {
+        let keywords = query.split_whitespace().collect::<Vec<_>>();
+        if keywords.is_empty() {
             return Ok(Vec::new());
         }
         let limit = limit.clamp(1, 100) as i64;
         let mut results = Vec::new();
-        if query.chars().count() >= 3 {
-            let fts_query = format!("\"{}\"", query.replace('"', "\"\""));
+        if keywords.iter().all(|keyword| keyword.chars().count() >= 3) {
+            let fts_query = keywords
+                .iter()
+                .map(|keyword| format!("\"{}\"", keyword.replace('"', "\"\"")))
+                .collect::<Vec<_>>()
+                .join(" AND ");
             let mut statement = self.connection.prepare(
                 "SELECT d.path, d.content
                  FROM documents_fts
@@ -121,24 +125,34 @@ impl Database {
                 let (path, content) = row?;
                 results.push(SearchResult {
                     path,
-                    snippet: content.as_deref().map(|text| snippet(text, query)),
+                    snippet: content.as_deref().map(|text| snippet(text, &keywords)),
                 });
             }
         } else {
-            let like_query = format!("%{}%", escape_like(query));
-            let mut statement = self.connection.prepare(
-                "SELECT path, content FROM documents
-                 WHERE path LIKE ?1 ESCAPE '\\' OR content LIKE ?1 ESCAPE '\\'
-                 ORDER BY path LIMIT ?2",
-            )?;
-            let rows = statement.query_map(params![like_query, limit], |row| {
+            let conditions = (1..=keywords.len())
+                .map(|index| {
+                    format!("(path LIKE ?{index} ESCAPE '\\' OR content LIKE ?{index} ESCAPE '\\')")
+                })
+                .collect::<Vec<_>>()
+                .join(" AND ");
+            let sql = format!(
+                "SELECT path, content FROM documents WHERE {conditions} ORDER BY path LIMIT ?{}",
+                keywords.len() + 1
+            );
+            let mut values = keywords
+                .iter()
+                .map(|keyword| Value::Text(format!("%{}%", escape_like(keyword))))
+                .collect::<Vec<_>>();
+            values.push(Value::Integer(limit));
+            let mut statement = self.connection.prepare(&sql)?;
+            let rows = statement.query_map(rusqlite::params_from_iter(values), |row| {
                 Ok((row.get::<_, String>(0)?, row.get::<_, Option<String>>(1)?))
             })?;
             for row in rows {
                 let (path, content) = row?;
                 results.push(SearchResult {
                     path,
-                    snippet: content.as_deref().map(|text| snippet(text, query)),
+                    snippet: content.as_deref().map(|text| snippet(text, &keywords)),
                 });
             }
         }
@@ -166,17 +180,21 @@ fn escape_like(query: &str) -> String {
         .replace('_', "\\_")
 }
 
-fn snippet(text: &str, query: &str) -> String {
+fn snippet(text: &str, keywords: &[&str]) -> String {
     const CONTEXT_CHARS: usize = 100;
-    let start = text
-        .find(query)
-        .or_else(|| {
-            let lower_text = text.to_lowercase();
-            let lower_query = query.to_lowercase();
-            lower_text.find(&lower_query).filter(|index| {
-                text.is_char_boundary(*index) && text.is_char_boundary(index + lower_query.len())
+    let lower_text = text.to_lowercase();
+    let start = keywords
+        .iter()
+        .filter_map(|keyword| {
+            text.find(keyword).or_else(|| {
+                let lower_keyword = keyword.to_lowercase();
+                lower_text.find(&lower_keyword).filter(|index| {
+                    text.is_char_boundary(*index)
+                        && text.is_char_boundary(index + lower_keyword.len())
+                })
             })
         })
+        .min()
         .unwrap_or(0);
     let before = text[..start].chars().count();
     let snippet_start = text[..start]
@@ -221,6 +239,61 @@ mod tests {
     }
 
     #[test]
+    fn searches_all_whitespace_separated_keywords() {
+        let database = Database::open_in_memory().unwrap();
+        database
+            .connection
+            .execute_batch(
+                "INSERT INTO documents(path, content) VALUES
+                    ('/tmp/both.txt', 'alpha text followed by beta text'),
+                    ('/tmp/alpha.txt', 'alpha text only'),
+                    ('/tmp/beta.txt', 'beta text only');",
+            )
+            .unwrap();
+
+        let result = database.search("alpha beta", 100).unwrap();
+        assert_eq!(result.len(), 1);
+        assert_eq!(result[0].path, "/tmp/both.txt");
+    }
+
+    #[test]
+    fn accepts_repeated_ascii_and_full_width_spaces() {
+        let database = Database::open_in_memory().unwrap();
+        database
+            .connection
+            .execute(
+                "INSERT INTO documents(path, content) VALUES ('/tmp/note.txt', 'alpha and beta')",
+                [],
+            )
+            .unwrap();
+
+        assert_eq!(
+            database
+                .search(" alpha  \u{3000} beta ", 100)
+                .unwrap()
+                .len(),
+            1
+        );
+    }
+
+    #[test]
+    fn combines_short_keywords_with_and() {
+        let database = Database::open_in_memory().unwrap();
+        database
+            .connection
+            .execute_batch(
+                "INSERT INTO documents(path, content) VALUES
+                    ('/tmp/both.txt', 'z rust program'),
+                    ('/tmp/one.txt', 'rust program');",
+            )
+            .unwrap();
+
+        let result = database.search("z rust", 100).unwrap();
+        assert_eq!(result.len(), 1);
+        assert_eq!(result[0].path, "/tmp/both.txt");
+    }
+
+    #[test]
     fn searches_japanese_text() {
         let database = Database::open_in_memory().unwrap();
         database
@@ -259,7 +332,7 @@ mod tests {
     #[test]
     fn makes_bounded_snippets() {
         let text = format!("{}needle{}", "a".repeat(200), "b".repeat(200));
-        let snippet = snippet(&text, "needle");
+        let snippet = snippet(&text, &["needle"]);
         assert!(snippet.contains("needle"));
         assert!(snippet.chars().count() <= 202);
         assert!(snippet.starts_with('…'));
