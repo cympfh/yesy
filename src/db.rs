@@ -39,7 +39,9 @@ impl Database {
             CREATE TABLE IF NOT EXISTS documents (
                 id INTEGER PRIMARY KEY,
                 path TEXT NOT NULL UNIQUE,
-                content TEXT
+                content TEXT,
+                modified_ns INTEGER NOT NULL DEFAULT 0,
+                size INTEGER NOT NULL DEFAULT 0
             );
             CREATE VIRTUAL TABLE IF NOT EXISTS documents_fts USING fts5(
                 path,
@@ -64,6 +66,23 @@ impl Database {
             END;
             ",
         )?;
+        let mut statement = connection.prepare("PRAGMA table_info(documents)")?;
+        let columns = statement
+            .query_map([], |row| row.get::<_, String>(1))?
+            .collect::<rusqlite::Result<Vec<_>>>()?;
+        drop(statement);
+        if !columns.iter().any(|column| column == "modified_ns") {
+            connection.execute(
+                "ALTER TABLE documents ADD COLUMN modified_ns INTEGER NOT NULL DEFAULT 0",
+                [],
+            )?;
+        }
+        if !columns.iter().any(|column| column == "size") {
+            connection.execute(
+                "ALTER TABLE documents ADD COLUMN size INTEGER NOT NULL DEFAULT 0",
+                [],
+            )?;
+        }
         Ok(Self { connection })
     }
 
