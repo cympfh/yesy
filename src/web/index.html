@@ -1,0 +1,51 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta name="color-scheme" content="light">
+  <title>yesy · Local file search</title>
+  <link rel="stylesheet" href="/style.css">
+  <script src="/app.js" defer></script>
+</head>
+<body>
+  <main>
+    <header class="masthead">
+      <a class="wordmark" href="/" aria-label="yesy home">yesy</a>
+      <p>Your files, back at your fingertips.</p>
+    </header>
+
+    <section class="search-section" aria-labelledby="search-heading">
+      <h1 id="search-heading">Find something on this machine.</h1>
+      <form id="search-form" role="search">
+        <label for="query">Search file names and text</label>
+        <div class="search-control">
+          <input id="query" name="q" type="search" autocomplete="off" autofocus placeholder="A phrase, a file name, a half-remembered word…">
+          <button type="submit">Search</button>
+        </div>
+      </form>
+      <p id="status" class="status" aria-live="polite">Search the files indexed by yesy.</p>
+    </section>
+
+    <section id="results" class="results" aria-label="Search results"></section>
+
+    <template id="result-template">
+      <article class="result">
+        <h2></h2>
+        <p class="snippet"></p>
+        <dl class="paths">
+          <div class="path-row linux-row">
+            <dt>Linux</dt>
+            <dd><code></code></dd>
+          </div>
+          <div class="path-row windows-row">
+            <dt>Windows</dt>
+            <dd><a target="_blank" rel="noreferrer"><code></code></a></dd>
+          </div>
+        </dl>
+      </article>
+    </template>
+  </main>
+  <noscript>Enable JavaScript to search this index.</noscript>
+</body>
+</html>
