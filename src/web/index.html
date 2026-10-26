@@ -21,7 +21,15 @@
         <label for="query">Search file names and text</label>
         <div class="search-control">
           <input id="query" name="q" type="search" autocomplete="off" autofocus placeholder="A phrase, a file name, a half-remembered word…">
-          <button type="submit">Search</button>
+          <div class="search-actions">
+            <button id="voice-search" class="voice-search" type="button" aria-label="Search by voice" title="Search by voice" aria-pressed="false" hidden>
+              <svg viewBox="0 0 24 24" aria-hidden="true">
+                <rect x="9" y="3" width="6" height="11" rx="3"></rect>
+                <path d="M5.5 11.5a6.5 6.5 0 0 0 13 0M12 18v3M9 21h6"></path>
+              </svg>
+            </button>
+            <button type="submit">Search</button>
+          </div>
         </div>
       </form>
       <p id="status" class="status" aria-live="polite"></p>
