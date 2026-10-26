@@ -404,7 +404,7 @@ mod tests {
         let second = directory.path().join("second.zip");
         let late = directory.path().join("late.zip");
         let bytes = [0x89, b'P', b'N', b'G'];
-        let sorted_bytes = [b's', b'o', b'r', b't', b'e', b'd'];
+        let sorted_bytes = *b"sorted";
         create_archive(&first, &[("preview.png", &bytes), ("later.txt", b"later")]);
         create_archive(
             &second,
