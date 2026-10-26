@@ -102,6 +102,34 @@ button:hover { background: #2446ba; }
   font-size: 0.92rem;
 }
 
+.search-history {
+  margin: 0 0 32px;
+  color: #6b7589;
+  font-size: 0.8rem;
+}
+
+.search-history[hidden] { display: none; }
+
+.search-history h2 {
+  margin: 0 0 10px;
+  font-size: 0.8rem;
+  font-weight: 650;
+}
+
+.search-history-list {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px 16px;
+}
+
+.search-history-list a {
+  color: #6b7589;
+  overflow-wrap: anywhere;
+  text-decoration: none;
+}
+
+.search-history-list a:hover { text-decoration: underline; }
+
 .results { border-top: 1px solid var(--line); }
 
 .result {
