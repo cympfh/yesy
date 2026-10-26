@@ -18,7 +18,7 @@ pub struct Cli {
 #[derive(Debug, Subcommand)]
 enum Command {
     Start {
-        #[arg(long, default_value = "127.0.0.1")]
+        #[arg(long, default_value = "0.0.0.0")]
         listen: IpAddr,
         #[arg(long, default_value_t = 8080)]
         port: u16,
