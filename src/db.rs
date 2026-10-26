@@ -1,4 +1,11 @@
-use std::{path::Path, time::Duration};
+use std::{
+    path::Path,
+    sync::{
+        Arc,
+        atomic::{AtomicBool, Ordering},
+    },
+    time::Duration,
+};
 
 use rusqlite::{Connection, OpenFlags, params};
 use serde::Serialize;
@@ -137,6 +144,19 @@ impl Database {
         }
         Ok(results)
     }
+
+    pub fn search_cancellable(
+        &self,
+        query: &str,
+        limit: usize,
+        cancelled: Arc<AtomicBool>,
+    ) -> anyhow::Result<Vec<SearchResult>> {
+        self.connection
+            .progress_handler(100, Some(move || cancelled.load(Ordering::Relaxed)));
+        let results = self.search(query, limit);
+        self.connection.progress_handler(0, None::<fn() -> bool>);
+        results
+    }
 }
 
 fn escape_like(query: &str) -> String {
@@ -214,6 +234,26 @@ mod tests {
         assert_eq!(database.search("全文検索", 100).unwrap().len(), 1);
         assert_eq!(database.search("検索", 100).unwrap().len(), 1);
         assert_eq!(database.search("メモ", 100).unwrap().len(), 1);
+    }
+
+    #[test]
+    fn cancels_search_and_reuses_the_connection() {
+        let database = Database::open_in_memory().unwrap();
+        database
+            .connection
+            .execute(
+                "WITH RECURSIVE numbers(n) AS (\
+                    VALUES(1) UNION ALL SELECT n + 1 FROM numbers WHERE n < 1000\
+                 ) \
+                 INSERT INTO documents(path, content) \
+                 SELECT printf('/tmp/%d.txt', n), 'find this text' FROM numbers",
+                [],
+            )
+            .unwrap();
+
+        let cancelled = Arc::new(AtomicBool::new(true));
+        assert!(database.search_cancellable("fi", 100, cancelled).is_err());
+        assert!(!database.search("find", 100).unwrap().is_empty());
     }
 
     #[test]

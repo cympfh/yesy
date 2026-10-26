@@ -134,6 +134,7 @@ results.addEventListener('click', async (event) => {
 });
 
 async function search() {
+  controller?.abort();
   const query = input.value.trim();
   const url = new URL(location.href);
   if (query) {
@@ -143,6 +144,7 @@ async function search() {
   }
   history.replaceState(null, '', url);
   if (!query) {
+    controller = undefined;
     results.replaceChildren();
     status.textContent = '';
     renderSearchHistory();
@@ -150,18 +152,19 @@ async function search() {
   }
   recordSearchHistory(query);
   historySection.hidden = true;
-  controller?.abort();
-  controller = new AbortController();
+  const currentController = new AbortController();
+  controller = currentController;
   status.textContent = 'Searching…';
   try {
     const response = await fetch(`/api/search?q=${encodeURIComponent(query)}`, {
-      signal: controller.signal,
+      signal: currentController.signal,
     });
     const data = await response.json();
+    if (currentController.signal.aborted) return;
     if (!response.ok) throw new Error(data.error || 'Search failed.');
     render(data);
   } catch (error) {
-    if (error.name === 'AbortError') return;
+    if (error.name === 'AbortError' || currentController.signal.aborted) return;
     results.replaceChildren();
     status.textContent = `${error.message} Run yesy update and try again.`;
   }
@@ -174,6 +177,7 @@ form.addEventListener('submit', (event) => {
 
 let timer;
 input.addEventListener('input', () => {
+  controller?.abort();
   clearTimeout(timer);
   timer = setTimeout(search, 180);
 });
