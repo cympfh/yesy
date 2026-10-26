@@ -4,12 +4,14 @@ use std::{
     net::{IpAddr, SocketAddr},
     path::Path,
     sync::{Arc, Mutex},
+    time::Instant,
 };
 
 use axum::{
     Json, Router,
-    extract::{Query, State},
+    extract::{Query, Request, State},
     http::{StatusCode, header},
+    middleware::{self, Next},
     response::{Html, IntoResponse, Response},
     routing::get,
 };
@@ -90,6 +92,20 @@ fn router(database: Database, wsl_distro: Option<String>) -> Router {
         .route("/api/image", get(image))
         .route("/api/archive-image", get(archive_image))
         .with_state(state)
+        .layer(middleware::from_fn(access_log))
+}
+
+async fn access_log(request: Request, next: Next) -> Response {
+    let method = request.method().clone();
+    let uri = request.uri().clone();
+    let started = Instant::now();
+    let response = next.run(request).await;
+    eprintln!(
+        "{method} {uri} {} {:?}",
+        response.status(),
+        started.elapsed()
+    );
+    response
 }
 
 async fn index() -> Html<&'static str> {
