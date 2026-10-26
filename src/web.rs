@@ -3,7 +3,10 @@ use std::{
     io::Read,
     net::{IpAddr, SocketAddr},
     path::Path,
-    sync::{Arc, Mutex},
+    sync::{
+        Arc, Mutex,
+        atomic::{AtomicBool, Ordering},
+    },
     time::Instant,
 };
 
@@ -133,16 +136,39 @@ async fn favicon() -> ([(header::HeaderName, &'static str); 1], &'static str) {
     )
 }
 
+struct CancelSearchOnDrop(Arc<AtomicBool>);
+
+impl Drop for CancelSearchOnDrop {
+    fn drop(&mut self) {
+        self.0.store(true, Ordering::Relaxed);
+    }
+}
+
+async fn run_search(
+    database: Arc<Mutex<Database>>,
+    query: String,
+) -> anyhow::Result<Vec<crate::db::SearchResult>> {
+    let cancelled = Arc::new(AtomicBool::new(false));
+    let _cancel_on_drop = CancelSearchOnDrop(cancelled.clone());
+    tokio::task::spawn_blocking(move || {
+        let database = database
+            .lock()
+            .map_err(|_| anyhow::anyhow!("The search database is unavailable"))?;
+        if cancelled.load(Ordering::Relaxed) {
+            anyhow::bail!("The search was cancelled");
+        }
+        database.search_cancellable(&query, 100, cancelled)
+    })
+    .await?
+}
+
 async fn search(
     State(state): State<AppState>,
     Query(query): Query<SearchQuery>,
 ) -> Result<Json<SearchResponse>, (StatusCode, Json<ErrorResponse>)> {
     let query = query.q.trim().to_owned();
-    let results = state
-        .database
-        .lock()
-        .map_err(|_| internal_error("The search database is unavailable".into()))?
-        .search(&query, 100)
+    let results = run_search(state.database.clone(), query.clone())
+        .await
         .map_err(|_| internal_error("The search could not be completed".into()))?;
     let results = results
         .into_iter()
@@ -510,6 +536,15 @@ mod tests {
             .await
             .unwrap();
         assert_eq!(response.status(), StatusCode::NOT_FOUND);
+    }
+
+    #[test]
+    fn dropping_a_search_marks_it_cancelled() {
+        let cancelled = Arc::new(AtomicBool::new(false));
+        let guard = CancelSearchOnDrop(cancelled.clone());
+        assert!(!cancelled.load(Ordering::Relaxed));
+        drop(guard);
+        assert!(cancelled.load(Ordering::Relaxed));
     }
 
     #[tokio::test]
