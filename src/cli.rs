@@ -24,6 +24,10 @@ enum Command {
         port: u16,
     },
     Update,
+    Search {
+        #[arg(required = true)]
+        query: Vec<String>,
+    },
 }
 
 impl Cli {
@@ -40,6 +44,15 @@ impl Cli {
             Command::Update => {
                 update_database(&database_path, &config)?;
             }
+            Command::Search { query } => {
+                if !Database::exists(&database_path) {
+                    update_database(&database_path, &config)?;
+                }
+                let database = Database::open(&database_path)?;
+                for result in database.search(&query.join(" "), 100)? {
+                    println!("{}", result.path);
+                }
+            }
         }
         Ok(())
     }
@@ -51,4 +64,23 @@ fn update_database(path: &Path, config: &Config) -> anyhow::Result<()> {
     let count = index::rebuild(&mut database.connection, config)?;
     println!("Indexed {count} files.");
     Ok(())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn parses_multiple_search_words() {
+        let cli = Cli::try_parse_from(["yesy", "search", "local", "search"]).unwrap();
+        let Command::Search { query } = cli.command else {
+            panic!("expected search command");
+        };
+        assert_eq!(query, ["local", "search"]);
+    }
+
+    #[test]
+    fn requires_a_search_word() {
+        assert!(Cli::try_parse_from(["yesy", "search"]).is_err());
+    }
 }
