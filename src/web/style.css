@@ -61,6 +61,12 @@ form label {
   border-bottom: 3px solid var(--blue);
 }
 
+.search-actions {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
+
 input {
   min-width: 0;
   padding: 16px 12px 16px 0;
@@ -87,6 +93,35 @@ button {
 }
 
 button:hover { background: #2446ba; }
+
+.voice-search {
+  display: grid;
+  place-items: center;
+  width: 42px;
+  height: 42px;
+  padding: 9px;
+  color: var(--blue);
+  background: transparent;
+}
+
+.voice-search[hidden] { display: none; }
+
+.voice-search:hover { color: white; }
+
+.voice-search[aria-pressed="true"] {
+  color: white;
+  background: #b3261e;
+}
+
+.voice-search svg {
+  width: 22px;
+  height: 22px;
+  fill: none;
+  stroke: currentColor;
+  stroke-width: 1.8;
+  stroke-linecap: round;
+  stroke-linejoin: round;
+}
 
 :focus-visible {
   outline: 3px solid var(--blue);
@@ -257,7 +292,7 @@ noscript { display: block; padding: 24px; text-align: center; }
 @media (max-width: 440px) {
   .search-control { grid-template-columns: 1fr; border-bottom: 0; }
   input { border-bottom: 3px solid var(--blue); }
-  button { justify-self: start; margin-top: 14px; }
+  .search-actions { margin-top: 14px; }
 }
 
 @media (prefers-reduced-motion: no-preference) {

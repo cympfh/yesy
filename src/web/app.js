@@ -5,6 +5,7 @@ const results = document.querySelector('#results');
 const template = document.querySelector('#result-template');
 const historySection = document.querySelector('#search-history');
 const historyList = document.querySelector('#search-history-list');
+const voiceButton = document.querySelector('#voice-search');
 const HISTORY_KEY = 'yesy.search-history.v1';
 let searchHistory = loadSearchHistory();
 let controller;
@@ -181,6 +182,55 @@ input.addEventListener('input', () => {
   clearTimeout(timer);
   timer = setTimeout(search, 180);
 });
+
+const SpeechRecognition = window.SpeechRecognition || window.webkitSpeechRecognition;
+if (SpeechRecognition) {
+  const recognition = new SpeechRecognition();
+  recognition.lang = navigator.language;
+  recognition.interimResults = true;
+  recognition.continuous = false;
+  let shouldSearch = false;
+
+  voiceButton.hidden = false;
+  voiceButton.addEventListener('click', () => {
+    if (voiceButton.getAttribute('aria-pressed') === 'true') {
+      recognition.stop();
+      return;
+    }
+    shouldSearch = false;
+    recognition.start();
+  });
+
+  recognition.addEventListener('start', () => {
+    voiceButton.setAttribute('aria-pressed', 'true');
+    voiceButton.setAttribute('aria-label', 'Stop voice input');
+    voiceButton.title = 'Stop voice input';
+    status.textContent = 'Listening…';
+  });
+
+  recognition.addEventListener('result', (event) => {
+    let transcript = '';
+    for (let index = 0; index < event.results.length; index += 1) {
+      transcript += event.results[index][0].transcript;
+      if (event.results[index].isFinal) shouldSearch = true;
+    }
+    input.value = transcript.trim();
+  });
+
+  recognition.addEventListener('error', (event) => {
+    shouldSearch = false;
+    status.textContent = event.error === 'not-allowed'
+      ? 'Microphone access was blocked. Allow access in your browser settings and try again.'
+      : 'Voice input failed. Try again or type your search.';
+  });
+
+  recognition.addEventListener('end', () => {
+    voiceButton.setAttribute('aria-pressed', 'false');
+    voiceButton.setAttribute('aria-label', 'Search by voice');
+    voiceButton.title = 'Search by voice';
+    if (shouldSearch && input.value.trim()) search();
+  });
+}
 
 renderSearchHistory();
 const initialQuery = new URLSearchParams(location.search).get('q');
