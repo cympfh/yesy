@@ -3,7 +3,42 @@ const input = document.querySelector('#query');
 const status = document.querySelector('#status');
 const results = document.querySelector('#results');
 const template = document.querySelector('#result-template');
+const historySection = document.querySelector('#search-history');
+const historyList = document.querySelector('#search-history-list');
+const HISTORY_KEY = 'yesy.search-history.v1';
+let searchHistory = loadSearchHistory();
 let controller;
+
+function loadSearchHistory() {
+  try {
+    const saved = JSON.parse(localStorage.getItem(HISTORY_KEY) || '[]');
+    if (!Array.isArray(saved)) return [];
+    const queries = saved.filter((query) => typeof query === 'string' && query.trim());
+    return [...new Set(queries)].slice(0, 30);
+  } catch {
+    return [];
+  }
+}
+
+function recordSearchHistory(query) {
+  searchHistory = [query, ...searchHistory.filter((item) => item !== query)].slice(0, 30);
+  try {
+    localStorage.setItem(HISTORY_KEY, JSON.stringify(searchHistory));
+  } catch {
+    return;
+  }
+}
+
+function renderSearchHistory() {
+  historyList.replaceChildren();
+  historySection.hidden = searchHistory.length === 0;
+  for (const query of searchHistory) {
+    const link = document.createElement('a');
+    link.href = `/?q=${encodeURIComponent(query)}`;
+    link.textContent = query;
+    historyList.append(link);
+  }
+}
 
 function appendHighlightedText(element, text, query) {
   element.replaceChildren();
@@ -110,8 +145,11 @@ async function search() {
   if (!query) {
     results.replaceChildren();
     status.textContent = '';
+    renderSearchHistory();
     return;
   }
+  recordSearchHistory(query);
+  historySection.hidden = true;
   controller?.abort();
   controller = new AbortController();
   status.textContent = 'Searching…';
@@ -140,6 +178,7 @@ input.addEventListener('input', () => {
   timer = setTimeout(search, 180);
 });
 
+renderSearchHistory();
 const initialQuery = new URLSearchParams(location.search).get('q');
 if (initialQuery) {
   input.value = initialQuery;
