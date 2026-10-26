@@ -1,9 +1,14 @@
-use std::{fs::File, io::Read, path::Path};
+use std::{
+    collections::{HashMap, HashSet},
+    fs::File,
+    io::Read,
+    path::Path,
+    time::{SystemTime, UNIX_EPOCH},
+};
 
 use anyhow::Context;
 use globset::{Glob, GlobMatcher};
 use rusqlite::{Connection, params};
-use walkdir::WalkDir;
 
 use crate::config::Config;
 
@@ -94,51 +99,134 @@ impl IgnorePattern {
     }
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+struct FileStamp {
+    modified_ns: Option<i64>,
+    size: i64,
+}
+
 pub fn rebuild(connection: &mut Connection, config: &Config) -> anyhow::Result<usize> {
     let ignore = IgnoreMatcher::new(&config.ignore)?;
+    let mut existing = HashMap::new();
+    {
+        let mut statement = connection.prepare("SELECT path, modified_ns, size FROM documents")?;
+        let rows = statement.query_map([], |row| {
+            Ok((
+                row.get::<_, String>(0)?,
+                FileStamp {
+                    modified_ns: row.get(1)?,
+                    size: row.get(2)?,
+                },
+            ))
+        })?;
+        for row in rows {
+            let (path, stamp) = row?;
+            existing.insert(path, stamp);
+        }
+    }
     let transaction = connection.transaction()?;
-    transaction.execute("DELETE FROM documents", [])?;
+    let mut seen = HashSet::new();
     let mut count = 0;
 
+    let (result_sender, result_receiver) = std::sync::mpsc::channel();
     for directory in &config.directories {
         let root = directory
             .canonicalize()
             .with_context(|| format!("failed to open search directory: {}", directory.display()))?;
-        let entries = WalkDir::new(&root).follow_links(false).into_iter();
-        for entry in entries.filter_entry(|entry| {
-            if entry.depth() == 0 || !entry.file_type().is_dir() {
-                return true;
-            }
-            let path = entry.path();
-            let relative = path.strip_prefix(&root).unwrap_or(path);
-            !ignore.is_ignored(relative, true)
-        }) {
-            let entry = match entry {
-                Ok(entry) => entry,
-                Err(error) => {
-                    eprintln!("Skipping {error}");
-                    continue;
-                }
-            };
-            if !entry.file_type().is_file() {
-                continue;
-            }
-            let path = entry.path();
-            let relative = path.strip_prefix(&root).unwrap_or(path);
-            if ignore.is_ignored(relative, false) {
-                continue;
-            }
-            let content = read_text(path);
-            transaction.execute(
-                "INSERT INTO documents (path, content) VALUES (?1, ?2) \
-                 ON CONFLICT(path) DO UPDATE SET content = excluded.content",
-                params![path.to_string_lossy(), content],
-            )?;
-            count += 1;
+        ignore::WalkBuilder::new(&root)
+            .hidden(false)
+            .parents(false)
+            .ignore(false)
+            .git_ignore(false)
+            .git_global(false)
+            .git_exclude(false)
+            .follow_links(false)
+            .build_parallel()
+            .run(|| {
+                let results = result_sender.clone();
+                let ignore = &ignore;
+                let existing = &existing;
+                let root = &root;
+                Box::new(move |entry| {
+                    let entry = match entry {
+                        Ok(entry) => entry,
+                        Err(error) => {
+                            eprintln!("Skipping {error}");
+                            return ignore::WalkState::Continue;
+                        }
+                    };
+                    let path = entry.path();
+                    let relative = path.strip_prefix(root).unwrap_or(path);
+                    let Some(file_type) = entry.file_type() else {
+                        return ignore::WalkState::Continue;
+                    };
+                    if file_type.is_dir() {
+                        if entry.depth() > 0 && ignore.is_ignored(relative, true) {
+                            return ignore::WalkState::Skip;
+                        }
+                        return ignore::WalkState::Continue;
+                    }
+                    if !file_type.is_file() || ignore.is_ignored(relative, false) {
+                        return ignore::WalkState::Continue;
+                    }
+                    if results
+                        .send(inspect_file(path.to_path_buf(), existing))
+                        .is_err()
+                    {
+                        return ignore::WalkState::Quit;
+                    }
+                    ignore::WalkState::Continue
+                })
+            });
+    }
+    drop(result_sender);
+    for (path, update) in result_receiver {
+        seen.insert(path.clone());
+        count += 1;
+        let Some((content, stamp)) = update else {
+            continue;
+        };
+        transaction.execute(
+            "INSERT INTO documents (path, content, modified_ns, size) \
+             VALUES (?1, ?2, ?3, ?4) \
+             ON CONFLICT(path) DO UPDATE SET \
+             content = excluded.content, \
+             modified_ns = excluded.modified_ns, \
+             size = excluded.size",
+            params![path, content, stamp.modified_ns, stamp.size],
+        )?;
+    }
+    for path in existing.keys() {
+        if !seen.contains(path) {
+            transaction.execute("DELETE FROM documents WHERE path = ?1", params![path])?;
         }
     }
     transaction.commit()?;
     Ok(count)
+}
+
+fn inspect_file(
+    path: std::path::PathBuf,
+    existing: &HashMap<String, FileStamp>,
+) -> (String, Option<(Option<String>, FileStamp)>) {
+    let path_string = path.to_string_lossy().into_owned();
+    let stamp = match std::fs::metadata(&path) {
+        Ok(metadata) => FileStamp {
+            modified_ns: metadata.modified().ok().and_then(modified_nanoseconds),
+            size: i64::try_from(metadata.len()).unwrap_or(i64::MAX),
+        },
+        Err(_) => FileStamp {
+            modified_ns: None,
+            size: 0,
+        },
+    };
+    let update = (existing.get(&path_string) != Some(&stamp)).then(|| (read_text(&path), stamp));
+    (path_string, update)
+}
+
+fn modified_nanoseconds(time: SystemTime) -> Option<i64> {
+    let nanoseconds = time.duration_since(UNIX_EPOCH).ok()?.as_nanos();
+    Some(nanoseconds.min(i64::MAX as u128) as i64)
 }
 
 fn read_text(path: &Path) -> Option<String> {
@@ -184,6 +272,7 @@ mod tests {
         fs::write(directory.path().join("note.txt"), "a searchable phrase").unwrap();
         fs::write(directory.path().join("ignored.log"), "hidden words").unwrap();
         fs::write(directory.path().join("binary.dat"), [0, 159, 146, 150]).unwrap();
+        fs::write(directory.path().join(".hidden.txt"), "visible dotfile").unwrap();
         fs::create_dir(directory.path().join("private")).unwrap();
         fs::write(directory.path().join("private/secret.txt"), "hidden words").unwrap();
         let config = Config {
@@ -192,10 +281,23 @@ mod tests {
         };
         let mut database = Database::open_in_memory().unwrap();
 
-        assert_eq!(rebuild(&mut database.connection, &config).unwrap(), 2);
+        assert_eq!(rebuild(&mut database.connection, &config).unwrap(), 3);
         assert_eq!(database.search("searchable", 100).unwrap().len(), 1);
         assert_eq!(database.search("binary.dat", 100).unwrap().len(), 1);
-        assert!(database.search("hidden", 100).unwrap().is_empty());
+        assert_eq!(database.search("visible dotfile", 100).unwrap().len(), 1);
+        assert!(database.search("hidden words", 100).unwrap().is_empty());
+
+        let changes = database.connection.total_changes();
+        assert_eq!(rebuild(&mut database.connection, &config).unwrap(), 3);
+        assert_eq!(database.connection.total_changes(), changes);
+
+        fs::write(
+            directory.path().join("note.txt"),
+            "a changed searchable phrase",
+        )
+        .unwrap();
+        rebuild(&mut database.connection, &config).unwrap();
+        assert_eq!(database.search("changed searchable", 100).unwrap().len(), 1);
 
         fs::remove_file(directory.path().join("note.txt")).unwrap();
         rebuild(&mut database.connection, &config).unwrap();
