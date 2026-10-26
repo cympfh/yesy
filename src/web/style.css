@@ -36,12 +36,6 @@ main {
   text-decoration: none;
 }
 
-.masthead p {
-  margin: 0;
-  color: #4d596f;
-  font-size: 0.9rem;
-}
-
 .search-section { padding: clamp(48px, 9vw, 104px) 0 40px; }
 
 h1 {
@@ -99,6 +93,8 @@ button:hover { background: #2446ba; }
   outline-offset: 4px;
 }
 
+#query:focus-visible { outline: none; }
+
 .status {
   min-height: 1.5em;
   margin: 18px 0 0;
@@ -123,6 +119,19 @@ button:hover { background: #2446ba; }
   overflow-wrap: anywhere;
 }
 
+.image-preview {
+  grid-column: 1;
+  display: block;
+  width: auto;
+  max-width: min(100%, 480px);
+  max-height: 360px;
+  margin: 0 0 18px;
+  object-fit: contain;
+  object-position: left top;
+}
+
+.image-preview[hidden] { display: none; }
+
 .snippet {
   grid-column: 1;
   margin: 0;
@@ -136,7 +145,7 @@ mark { color: inherit; background: var(--mark); }
 
 .paths {
   grid-column: 2;
-  grid-row: 1 / span 2;
+  grid-row: 1 / span 3;
   margin: 0;
 }
 
@@ -158,14 +167,59 @@ code {
   overflow-wrap: anywhere;
 }
 
-.paths a { color: var(--blue); text-decoration-thickness: 1px; text-underline-offset: 3px; }
+.path-value {
+  display: flex;
+  align-items: flex-start;
+  gap: 8px;
+}
+
+.path-value code { flex: 1; min-width: 0; }
+
+.path-value a {
+  flex: 1;
+  min-width: 0;
+  color: var(--blue);
+  text-decoration-thickness: 1px;
+  text-underline-offset: 3px;
+}
+
+.paths .copy-path {
+  flex: 0 0 28px;
+  display: grid;
+  place-items: center;
+  width: 28px;
+  height: 28px;
+  margin-top: -4px;
+  padding: 5px;
+  border-radius: 3px;
+  color: #4d596f;
+  background: transparent;
+}
+
+.paths .copy-path:hover { color: var(--blue); background: #e2e7f1; }
+
+.copy-path svg {
+  width: 17px;
+  height: 17px;
+  fill: none;
+  stroke: currentColor;
+  stroke-width: 1.8;
+  stroke-linecap: round;
+  stroke-linejoin: round;
+}
+
+.copy-feedback {
+  display: block;
+  margin-top: 6px;
+  color: #4d596f;
+  font-size: 0.78rem;
+}
 
 noscript { display: block; padding: 24px; text-align: center; }
 
 @media (max-width: 720px) {
   main { width: min(100% - 32px, 1080px); }
   .masthead { min-height: 76px; }
-  .masthead p { display: none; }
   .search-section { padding-top: 48px; }
   h1 { margin-bottom: 32px; }
   .result { display: block; }
