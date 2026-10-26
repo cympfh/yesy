@@ -2,9 +2,9 @@ use std::{
     fs::File,
     io::Read,
     net::{IpAddr, SocketAddr},
-    path::Path,
+    path::{Path, PathBuf},
     sync::{
-        Arc, Mutex,
+        Arc,
         atomic::{AtomicBool, Ordering},
     },
     time::Instant,
@@ -29,7 +29,7 @@ use crate::{
 
 #[derive(Clone)]
 struct AppState {
-    database: Arc<Mutex<Database>>,
+    database_path: Arc<PathBuf>,
     wsl_distro: Option<Arc<str>>,
 }
 
@@ -65,8 +65,7 @@ struct ErrorResponse {
 }
 
 pub async fn serve(database_path: &Path, listen: IpAddr, port: u16) -> anyhow::Result<()> {
-    let database = Database::open(database_path)?;
-    let app = router(database, path::detect_wsl_distro());
+    let app = router(database_path.to_owned(), path::detect_wsl_distro());
     let address = SocketAddr::new(listen, port);
     let listener = tokio::net::TcpListener::bind(address).await?;
     println!("Server running on http://{address}");
@@ -81,9 +80,9 @@ pub async fn serve(database_path: &Path, listen: IpAddr, port: u16) -> anyhow::R
     Ok(())
 }
 
-fn router(database: Database, wsl_distro: Option<String>) -> Router {
+fn router(database_path: PathBuf, wsl_distro: Option<String>) -> Router {
     let state = AppState {
-        database: Arc::new(Mutex::new(database)),
+        database_path: Arc::new(database_path),
         wsl_distro: wsl_distro.map(Arc::from),
     };
     Router::new()
@@ -145,15 +144,13 @@ impl Drop for CancelSearchOnDrop {
 }
 
 async fn run_search(
-    database: Arc<Mutex<Database>>,
+    database_path: Arc<PathBuf>,
     query: String,
 ) -> anyhow::Result<Vec<crate::db::SearchResult>> {
     let cancelled = Arc::new(AtomicBool::new(false));
     let _cancel_on_drop = CancelSearchOnDrop(cancelled.clone());
     tokio::task::spawn_blocking(move || {
-        let database = database
-            .lock()
-            .map_err(|_| anyhow::anyhow!("The search database is unavailable"))?;
+        let database = Database::open(&database_path)?;
         if cancelled.load(Ordering::Relaxed) {
             anyhow::bail!("The search was cancelled");
         }
@@ -167,7 +164,7 @@ async fn search(
     Query(query): Query<SearchQuery>,
 ) -> Result<Json<SearchResponse>, (StatusCode, Json<ErrorResponse>)> {
     let query = query.q.trim().to_owned();
-    let results = run_search(state.database.clone(), query.clone())
+    let results = run_search(state.database_path.clone(), query.clone())
         .await
         .map_err(|_| internal_error("The search could not be completed".into()))?;
     let results = results
@@ -244,10 +241,9 @@ async fn archive_image(
 }
 
 fn ensure_indexed(state: &AppState, path: &str) -> Result<(), (StatusCode, Json<ErrorResponse>)> {
-    let indexed = state
-        .database
-        .lock()
-        .map_err(|_| internal_error("The search database is unavailable".into()))?
+    let database = Database::open(&state.database_path)
+        .map_err(|_| internal_error("The search database is unavailable".into()))?;
+    let indexed = database
         .connection
         .query_row(
             "SELECT EXISTS(SELECT 1 FROM documents WHERE path = ?1)",
@@ -317,14 +313,21 @@ mod tests {
 
     use super::*;
 
+    fn test_database() -> (tempfile::NamedTempFile, Database) {
+        let file = tempfile::NamedTempFile::new().unwrap();
+        let database = Database::open(file.path()).unwrap();
+        (file, database)
+    }
+
     #[tokio::test]
     async fn serves_search_results_as_json() {
-        let database = Database::open_in_memory().unwrap();
+        let (file, database) = test_database();
         database.connection.execute(
             "INSERT INTO documents(path, content) VALUES ('/home/user/note.txt', 'a memorable phrase')",
             [],
         ).unwrap();
-        let response = router(database, Some("Ubuntu".into()))
+        drop(database);
+        let response = router(file.path().to_owned(), Some("Ubuntu".into()))
             .oneshot(
                 Request::get("/api/search?q=memorable")
                     .body(Body::empty())
@@ -345,12 +348,13 @@ mod tests {
 
     #[tokio::test]
     async fn serves_windows_drive_paths_as_json() {
-        let database = Database::open_in_memory().unwrap();
+        let (file, database) = test_database();
         database.connection.execute(
             "INSERT INTO documents(path, content) VALUES ('/mnt/c/Users/user/note.txt', 'a memorable phrase')",
             [],
         ).unwrap();
-        let response = router(database, Some("Ubuntu".into()))
+        drop(database);
+        let response = router(file.path().to_owned(), Some("Ubuntu".into()))
             .oneshot(
                 Request::get("/api/search?q=memorable")
                     .body(Body::empty())
@@ -378,7 +382,7 @@ mod tests {
         let path = directory.path().join("preview.png");
         let bytes = [0x89, b'P', b'N', b'G'];
         std::fs::write(&path, bytes).unwrap();
-        let database = Database::open_in_memory().unwrap();
+        let (database_file, database) = test_database();
         database
             .connection
             .execute(
@@ -386,7 +390,8 @@ mod tests {
                 params![path.to_string_lossy()],
             )
             .unwrap();
-        let app = router(database, None);
+        drop(database);
+        let app = router(database_file.path().to_owned(), None);
         let response = app
             .clone()
             .oneshot(
@@ -465,7 +470,7 @@ mod tests {
                 ("preview.png", &bytes),
             ],
         );
-        let database = Database::open_in_memory().unwrap();
+        let (database_file, database) = test_database();
         for path in [&first, &second, &late] {
             database
                 .connection
@@ -475,7 +480,8 @@ mod tests {
                 )
                 .unwrap();
         }
-        let app = router(database, None);
+        drop(database);
+        let app = router(database_file.path().to_owned(), None);
         let response = app
             .clone()
             .oneshot(
@@ -549,8 +555,9 @@ mod tests {
 
     #[tokio::test]
     async fn returns_an_empty_result_for_an_empty_query() {
-        let database = Database::open_in_memory().unwrap();
-        let response = router(database, None)
+        let (file, database) = test_database();
+        drop(database);
+        let response = router(file.path().to_owned(), None)
             .oneshot(Request::get("/api/search?q=").body(Body::empty()).unwrap())
             .await
             .unwrap();
