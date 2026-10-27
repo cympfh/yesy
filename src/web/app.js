@@ -113,6 +113,9 @@ function render(data) {
       windowsRow.querySelector('a').href = result.windows_url;
       windowsRow.querySelector('code').textContent = result.windows_path;
       windowsRow.querySelector('.copy-path').dataset.path = result.windows_path;
+      const openWith = item.querySelector('.open-with');
+      openWith.hidden = false;
+      openWith.querySelector('select').dataset.path = result.path;
     } else {
       windowsRow.remove();
     }
@@ -149,6 +152,29 @@ results.addEventListener('click', async (event) => {
     feedback.textContent = 'Copied.';
   } catch {
     feedback.textContent = 'Copy failed. Select the path and copy it manually.';
+  }
+});
+
+results.addEventListener('change', async (event) => {
+  const select = event.target.closest('.open-with select');
+  if (!select || !select.value) return;
+  const feedback = select.closest('.open-with').querySelector('.open-feedback');
+  select.disabled = true;
+  feedback.textContent = 'Opening...';
+  try {
+    const response = await fetch('/api/open', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ path: select.dataset.path, application: select.value }),
+    });
+    const data = response.status === 204 ? null : await response.json();
+    if (!response.ok) throw new Error(data?.error || 'The file could not be opened.');
+    feedback.textContent = 'Opened.';
+  } catch (error) {
+    feedback.textContent = error.message;
+  } finally {
+    select.value = '';
+    select.disabled = false;
   }
 });
 

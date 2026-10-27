@@ -278,6 +278,41 @@ code {
   font-size: 0.78rem;
 }
 
+.open-with {
+  grid-column: 2;
+  margin-top: 14px;
+}
+
+.open-with select {
+  max-width: 100%;
+  padding: 6px 28px 6px 8px;
+  border: 1px solid #b7bfcc;
+  border-radius: 3px;
+  color: #263248;
+  background: #fff;
+  font: inherit;
+  font-size: 0.82rem;
+}
+
+.open-feedback {
+  display: block;
+  margin-top: 6px;
+  color: #4d596f;
+  font-size: 0.78rem;
+}
+
+.visually-hidden {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  padding: 0;
+  margin: -1px;
+  overflow: hidden;
+  clip: rect(0, 0, 0, 0);
+  white-space: nowrap;
+  border: 0;
+}
+
 noscript { display: block; padding: 24px; text-align: center; }
 
 @media (max-width: 720px) {
@@ -287,6 +322,7 @@ noscript { display: block; padding: 24px; text-align: center; }
   h1 { margin-bottom: 32px; }
   .result { display: block; }
   .paths { margin-top: 22px; }
+  .open-with { margin-top: 14px; }
 }
 
 @media (max-width: 440px) {
