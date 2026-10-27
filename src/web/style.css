@@ -329,6 +329,11 @@ code {
   stroke-linejoin: round;
 }
 
+.open-application .zed-icon {
+  fill: currentColor;
+  stroke: none;
+}
+
 .open-feedback {
   color: #4d596f;
   font-size: 0.78rem;
