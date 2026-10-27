@@ -204,11 +204,25 @@ button:hover { background: #2446ba; }
   overflow-wrap: anywhere;
 }
 
+.file-metadata {
+  grid-column: 1;
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px 24px;
+  margin: 18px 0 0;
+  color: #4d596f;
+  font-size: 0.78rem;
+}
+
+.file-metadata div { display: flex; gap: 6px; }
+.file-metadata dt { font-weight: 650; }
+.file-metadata dd { margin: 0; }
+
 mark { color: inherit; background: var(--mark); }
 
 .paths {
   grid-column: 2;
-  grid-row: 1 / span 3;
+  grid-row: 1 / span 4;
   margin: 0;
 }
 

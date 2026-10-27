@@ -105,6 +105,7 @@ impl IgnorePattern {
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 struct FileStamp {
+    created_ns: Option<i64>,
     modified_ns: Option<i64>,
     size: i64,
 }
@@ -121,13 +122,15 @@ pub fn rebuild_with_progress(
     let ignore = IgnoreMatcher::new(&config.ignore)?;
     let mut existing = HashMap::new();
     {
-        let mut statement = connection.prepare("SELECT path, modified_ns, size FROM documents")?;
+        let mut statement =
+            connection.prepare("SELECT path, created_ns, modified_ns, size FROM documents")?;
         let rows = statement.query_map([], |row| {
             Ok((
                 row.get::<_, String>(0)?,
                 FileStamp {
-                    modified_ns: row.get(1)?,
-                    size: row.get(2)?,
+                    created_ns: row.get(1)?,
+                    modified_ns: row.get(2)?,
+                    size: row.get(3)?,
                 },
             ))
         })?;
@@ -220,13 +223,20 @@ pub fn rebuild_with_progress(
             count += 1;
             if let Some((content, stamp)) = update {
                 transaction.execute(
-                    "INSERT INTO documents (path, content, modified_ns, size) \
-                     VALUES (?1, ?2, ?3, ?4) \
+                    "INSERT INTO documents (path, content, created_ns, modified_ns, size) \
+                     VALUES (?1, ?2, ?3, ?4, ?5) \
                      ON CONFLICT(path) DO UPDATE SET \
                      content = excluded.content, \
+                     created_ns = excluded.created_ns, \
                      modified_ns = excluded.modified_ns, \
                      size = excluded.size",
-                    params![path, content, stamp.modified_ns, stamp.size],
+                    params![
+                        path,
+                        content,
+                        stamp.created_ns,
+                        stamp.modified_ns,
+                        stamp.size
+                    ],
                 )?;
             }
             progress(count, total);
@@ -249,10 +259,12 @@ fn inspect_file(
     let path_string = path.to_string_lossy().into_owned();
     let stamp = match std::fs::metadata(&path) {
         Ok(metadata) => FileStamp {
-            modified_ns: metadata.modified().ok().and_then(modified_nanoseconds),
+            created_ns: metadata.created().ok().and_then(system_time_nanoseconds),
+            modified_ns: metadata.modified().ok().and_then(system_time_nanoseconds),
             size: i64::try_from(metadata.len()).unwrap_or(i64::MAX),
         },
         Err(_) => FileStamp {
+            created_ns: None,
             modified_ns: None,
             size: 0,
         },
@@ -261,7 +273,7 @@ fn inspect_file(
     (path_string, update)
 }
 
-fn modified_nanoseconds(time: SystemTime) -> Option<i64> {
+fn system_time_nanoseconds(time: SystemTime) -> Option<i64> {
     let nanoseconds = time.duration_since(UNIX_EPOCH).ok()?.as_nanos();
     Some(nanoseconds.min(i64::MAX as u128) as i64)
 }

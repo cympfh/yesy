@@ -64,6 +64,9 @@ struct WebSearchResult {
     windows_url: Option<String>,
     image_url: Option<String>,
     snippet: Option<String>,
+    size: i64,
+    created_ns: Option<i64>,
+    modified_ns: Option<i64>,
 }
 
 #[derive(Debug, Serialize)]
@@ -193,6 +196,9 @@ async fn search(
                 windows_path,
                 windows_url,
                 snippet: result.snippet,
+                size: result.size,
+                created_ns: result.created_ns,
+                modified_ns: result.modified_ns,
             }
         })
         .collect();
@@ -368,10 +374,14 @@ mod tests {
     #[tokio::test]
     async fn serves_search_results_as_json() {
         let (file, database) = test_database();
-        database.connection.execute(
-            "INSERT INTO documents(path, content) VALUES ('/home/user/note.txt', 'a memorable phrase')",
-            [],
-        ).unwrap();
+        database
+            .connection
+            .execute(
+                "INSERT INTO documents(path, content, size, created_ns, modified_ns) \
+             VALUES ('/home/user/note.txt', 'a memorable phrase', 1234, 1000000000, 2000000000)",
+                [],
+            )
+            .unwrap();
         drop(database);
         let response = router(file.path().to_owned(), Some("Ubuntu".into()))
             .oneshot(
@@ -386,6 +396,9 @@ mod tests {
         let body = response.into_body().collect().await.unwrap().to_bytes();
         let body: serde_json::Value = serde_json::from_slice(&body).unwrap();
         assert_eq!(body["results"][0]["path"], "/home/user/note.txt");
+        assert_eq!(body["results"][0]["size"], 1234);
+        assert_eq!(body["results"][0]["created_ns"], 1_000_000_000_i64);
+        assert_eq!(body["results"][0]["modified_ns"], 2_000_000_000_i64);
         assert_eq!(
             body["results"][0]["windows_path"],
             "\\\\wsl.localhost\\Ubuntu\\home\\user\\note.txt"
