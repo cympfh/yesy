@@ -3,6 +3,10 @@ use std::{
     fs::File,
     io::Read,
     path::Path,
+    sync::{
+        Mutex,
+        atomic::{AtomicUsize, Ordering},
+    },
     time::{SystemTime, UNIX_EPOCH},
 };
 
@@ -106,6 +110,14 @@ struct FileStamp {
 }
 
 pub fn rebuild(connection: &mut Connection, config: &Config) -> anyhow::Result<usize> {
+    rebuild_with_progress(connection, config, |_, _| {})
+}
+
+pub fn rebuild_with_progress(
+    connection: &mut Connection,
+    config: &Config,
+    mut progress: impl FnMut(usize, usize),
+) -> anyhow::Result<usize> {
     let ignore = IgnoreMatcher::new(&config.ignore)?;
     let mut existing = HashMap::new();
     {
@@ -128,7 +140,7 @@ pub fn rebuild(connection: &mut Connection, config: &Config) -> anyhow::Result<u
     let mut seen = HashSet::new();
     let mut count = 0;
 
-    let (result_sender, result_receiver) = std::sync::mpsc::channel();
+    let paths = Mutex::new(Vec::new());
     for directory in &config.directories {
         let root = directory
             .canonicalize()
@@ -143,9 +155,8 @@ pub fn rebuild(connection: &mut Connection, config: &Config) -> anyhow::Result<u
             .follow_links(false)
             .build_parallel()
             .run(|| {
-                let results = result_sender.clone();
+                let paths = &paths;
                 let ignore = &ignore;
-                let existing = &existing;
                 let root = &root;
                 Box::new(move |entry| {
                     let entry = match entry {
@@ -169,33 +180,59 @@ pub fn rebuild(connection: &mut Connection, config: &Config) -> anyhow::Result<u
                     if !file_type.is_file() || ignore.is_ignored(relative, false) {
                         return ignore::WalkState::Continue;
                     }
-                    if results
-                        .send(inspect_file(path.to_path_buf(), existing))
-                        .is_err()
-                    {
-                        return ignore::WalkState::Quit;
-                    }
+                    paths.lock().unwrap().push(path.to_path_buf());
                     ignore::WalkState::Continue
                 })
             });
     }
-    drop(result_sender);
-    for (path, update) in result_receiver {
-        seen.insert(path.clone());
-        count += 1;
-        let Some((content, stamp)) = update else {
-            continue;
-        };
-        transaction.execute(
-            "INSERT INTO documents (path, content, modified_ns, size) \
-             VALUES (?1, ?2, ?3, ?4) \
-             ON CONFLICT(path) DO UPDATE SET \
-             content = excluded.content, \
-             modified_ns = excluded.modified_ns, \
-             size = excluded.size",
-            params![path, content, stamp.modified_ns, stamp.size],
-        )?;
-    }
+    let paths = paths.into_inner().unwrap();
+    let total = paths.len();
+    progress(0, total);
+    let next_path = AtomicUsize::new(0);
+    let worker_count = std::thread::available_parallelism()
+        .map_or(1, usize::from)
+        .min(total.max(1));
+    let (result_sender, result_receiver) = std::sync::mpsc::channel();
+    std::thread::scope(|scope| -> anyhow::Result<()> {
+        for _ in 0..worker_count {
+            let result_sender = result_sender.clone();
+            let paths = &paths;
+            let existing = &existing;
+            let next_path = &next_path;
+            scope.spawn(move || {
+                loop {
+                    let index = next_path.fetch_add(1, Ordering::Relaxed);
+                    let Some(path) = paths.get(index) else {
+                        break;
+                    };
+                    if result_sender
+                        .send(inspect_file(path.clone(), existing))
+                        .is_err()
+                    {
+                        break;
+                    }
+                }
+            });
+        }
+        drop(result_sender);
+        for (path, update) in result_receiver {
+            seen.insert(path.clone());
+            count += 1;
+            if let Some((content, stamp)) = update {
+                transaction.execute(
+                    "INSERT INTO documents (path, content, modified_ns, size) \
+                     VALUES (?1, ?2, ?3, ?4) \
+                     ON CONFLICT(path) DO UPDATE SET \
+                     content = excluded.content, \
+                     modified_ns = excluded.modified_ns, \
+                     size = excluded.size",
+                    params![path, content, stamp.modified_ns, stamp.size],
+                )?;
+            }
+            progress(count, total);
+        }
+        Ok(())
+    })?;
     for path in existing.keys() {
         if !seen.contains(path) {
             transaction.execute("DELETE FROM documents WHERE path = ?1", params![path])?;
@@ -281,7 +318,16 @@ mod tests {
         };
         let mut database = Database::open_in_memory().unwrap();
 
-        assert_eq!(rebuild(&mut database.connection, &config).unwrap(), 3);
+        let mut progress = Vec::new();
+        assert_eq!(
+            rebuild_with_progress(&mut database.connection, &config, |done, total| {
+                progress.push((done, total));
+            })
+            .unwrap(),
+            3
+        );
+        assert_eq!(progress.first(), Some(&(0, 3)));
+        assert_eq!(progress.last(), Some(&(3, 3)));
         assert_eq!(database.search("searchable", 100).unwrap().len(), 1);
         assert_eq!(database.search("binary.dat", 100).unwrap().len(), 1);
         assert_eq!(database.search("visible dotfile", 100).unwrap().len(), 1);
