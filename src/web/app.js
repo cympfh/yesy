@@ -7,11 +7,10 @@ const historySection = document.querySelector('#search-history');
 const historyList = document.querySelector('#search-history-list');
 const voiceButton = document.querySelector('#voice-search');
 const HISTORY_KEY = 'yesy.search-history.v1';
-const HISTORY_DELAY = 5000;
+const HISTORY_REPLACEMENT_WINDOW = 8000;
 let searchHistory = loadSearchHistory();
 let controller;
-let historyTimer;
-let lastInputAt = Date.now();
+let previousSearch;
 
 function loadSearchHistory() {
   try {
@@ -25,27 +24,20 @@ function loadSearchHistory() {
 }
 
 function recordSearchHistory(query) {
+  const searchedAt = Date.now();
+  if (previousSearch && (
+    query.startsWith(previousSearch.query)
+    || searchedAt - previousSearch.searchedAt <= HISTORY_REPLACEMENT_WINDOW
+  )) {
+    searchHistory = searchHistory.filter((item) => item !== previousSearch.query);
+  }
   searchHistory = [query, ...searchHistory.filter((item) => item !== query)].slice(0, 30);
+  previousSearch = { query, searchedAt };
   try {
     localStorage.setItem(HISTORY_KEY, JSON.stringify(searchHistory));
   } catch {
     return;
   }
-}
-
-function cancelPendingSearchHistory() {
-  clearTimeout(historyTimer);
-  historyTimer = undefined;
-}
-
-function scheduleSearchHistory(query) {
-  cancelPendingSearchHistory();
-  const delay = Math.max(0, HISTORY_DELAY - (Date.now() - lastInputAt));
-  historyTimer = setTimeout(() => {
-    historyTimer = undefined;
-    if (input.value.trim() !== query) return;
-    recordSearchHistory(query);
-  }, delay);
 }
 
 function renderSearchHistory() {
@@ -181,7 +173,6 @@ results.addEventListener('click', async (event) => {
 
 async function search() {
   controller?.abort();
-  cancelPendingSearchHistory();
   const query = input.value.trim();
   const url = new URL(location.href);
   if (query) {
@@ -210,7 +201,6 @@ async function search() {
     if (currentController.signal.aborted) return;
     if (!response.ok) throw new Error(data.error || 'Search failed.');
     render(data);
-    if (data.results.length > 0) scheduleSearchHistory(query);
   } catch (error) {
     if (error.name === 'AbortError' || currentController.signal.aborted) return;
     results.replaceChildren();
@@ -226,9 +216,7 @@ form.addEventListener('submit', (event) => {
 let timer;
 input.addEventListener('input', () => {
   controller?.abort();
-  cancelPendingSearchHistory();
   clearTimeout(timer);
-  lastInputAt = Date.now();
   timer = setTimeout(search, 180);
 });
 
@@ -264,8 +252,6 @@ if (SpeechRecognition) {
       if (event.results[index].isFinal) shouldSearch = true;
     }
     input.value = transcript.trim();
-    cancelPendingSearchHistory();
-    lastInputAt = Date.now();
   });
 
   recognition.addEventListener('error', (event) => {
