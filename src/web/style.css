@@ -279,38 +279,48 @@ code {
 }
 
 .open-with {
-  grid-column: 2;
-  margin-top: 14px;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  min-height: 32px;
+  margin-top: 8px;
 }
 
-.open-with select {
-  max-width: 100%;
-  padding: 6px 28px 6px 8px;
+.open-with[hidden] { display: none; }
+
+.open-with .open-application {
+  display: grid;
+  place-items: center;
+  width: 30px;
+  height: 30px;
+  padding: 5px;
   border: 1px solid #b7bfcc;
   border-radius: 3px;
-  color: #263248;
-  background: #fff;
-  font: inherit;
-  font-size: 0.82rem;
+  color: var(--blue);
+  background: transparent;
+}
+
+.open-with .open-application:hover { color: white; background: var(--blue); }
+
+.open-with .open-application:disabled {
+  color: #6b7589;
+  background: #e2e7f1;
+  cursor: wait;
+}
+
+.open-application svg {
+  width: 18px;
+  height: 18px;
+  fill: none;
+  stroke: currentColor;
+  stroke-width: 1.8;
+  stroke-linecap: round;
+  stroke-linejoin: round;
 }
 
 .open-feedback {
-  display: block;
-  margin-top: 6px;
   color: #4d596f;
   font-size: 0.78rem;
-}
-
-.visually-hidden {
-  position: absolute;
-  width: 1px;
-  height: 1px;
-  padding: 0;
-  margin: -1px;
-  overflow: hidden;
-  clip: rect(0, 0, 0, 0);
-  white-space: nowrap;
-  border: 0;
 }
 
 noscript { display: block; padding: 24px; text-align: center; }
