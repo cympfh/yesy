@@ -87,6 +87,8 @@ WSL では、たとえば `/home/user/note.txt` の検索結果に `\\wsl.localh
 
 各パスの右にあるクリップボードアイコンをクリックすると、そのパスをコピーできます。Windows のパスは、エクスプローラーのアドレスバーに貼り付けて開けます。Windows のブラウザでは、HTTP ページから `file:` URL を直接開く操作が制限されるためです。
 
+Windows パスがある検索結果では、`Open with...` から NeeViewer を選ぶとファイルを開けます。Windows 側で `NeeView.exe` を実行できる状態にしてください。
+
 ## 開発
 
 ```console

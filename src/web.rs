@@ -3,6 +3,7 @@ use std::{
     io::Read,
     net::{IpAddr, SocketAddr},
     path::{Path, PathBuf},
+    process::Command,
     sync::{
         Arc,
         atomic::{AtomicBool, Ordering},
@@ -16,7 +17,7 @@ use axum::{
     http::{StatusCode, header},
     middleware::{self, Next},
     response::{Html, IntoResponse, Response},
-    routing::get,
+    routing::{get, post},
 };
 use percent_encoding::{NON_ALPHANUMERIC, utf8_percent_encode};
 use rusqlite::params;
@@ -42,6 +43,12 @@ struct SearchQuery {
 #[derive(Debug, Deserialize)]
 struct ImageQuery {
     path: String,
+}
+
+#[derive(Debug, Deserialize)]
+struct OpenRequest {
+    path: String,
+    application: String,
 }
 
 #[derive(Debug, Serialize)]
@@ -91,6 +98,7 @@ fn router(database_path: PathBuf, wsl_distro: Option<String>) -> Router {
         .route("/style.css", get(stylesheet))
         .route("/favicon.svg", get(favicon))
         .route("/api/search", get(search))
+        .route("/api/open", post(open_with))
         .route("/api/image", get(image))
         .route("/api/archive-image", get(archive_image))
         .with_state(state)
@@ -203,6 +211,32 @@ async fn image(
     Ok(([(header::CONTENT_TYPE, content_type)], bytes).into_response())
 }
 
+async fn open_with(
+    State(state): State<AppState>,
+    Json(request): Json<OpenRequest>,
+) -> Result<StatusCode, (StatusCode, Json<ErrorResponse>)> {
+    ensure_indexed(&state, &request.path)?;
+    if request.application != "neeview" {
+        return Err(bad_request("The application is not supported".into()));
+    }
+    let distro = state
+        .wsl_distro
+        .as_deref()
+        .ok_or_else(|| bad_request("NeeViewer is only available from WSL".into()))?;
+    let path = windows_path(Path::new(&request.path), distro)
+        .ok_or_else(|| bad_request("The path cannot be opened by NeeViewer".into()))?;
+    neeview_command(&path)
+        .spawn()
+        .map_err(|_| internal_error("NeeViewer could not be started".into()))?;
+    Ok(StatusCode::NO_CONTENT)
+}
+
+fn neeview_command(path: &str) -> Command {
+    let mut command = Command::new("NeeView.exe");
+    command.arg(path);
+    command
+}
+
 async fn archive_image(
     State(state): State<AppState>,
     Query(query): Query<ImageQuery>,
@@ -260,6 +294,13 @@ fn not_found() -> (StatusCode, Json<ErrorResponse>) {
         Json(ErrorResponse {
             error: "The image was not found".into(),
         }),
+    )
+}
+
+fn bad_request(message: String) -> (StatusCode, Json<ErrorResponse>) {
+    (
+        StatusCode::BAD_REQUEST,
+        Json(ErrorResponse { error: message }),
     )
 }
 
@@ -594,5 +635,41 @@ mod tests {
         let body = response.into_body().collect().await.unwrap().to_bytes();
         let body: serde_json::Value = serde_json::from_slice(&body).unwrap();
         assert_eq!(body["results"].as_array().unwrap().len(), 0);
+    }
+
+    #[test]
+    fn builds_a_neeview_command_with_the_windows_path_as_one_argument() {
+        let command = neeview_command(r"C:\Users\user\My Pictures\book.zip");
+        assert_eq!(command.get_program(), "NeeView.exe");
+        assert_eq!(
+            command.get_args().collect::<Vec<_>>(),
+            [r"C:\Users\user\My Pictures\book.zip"]
+        );
+    }
+
+    #[tokio::test]
+    async fn rejects_an_unknown_open_with_application() {
+        let (file, database) = test_database();
+        database
+            .connection
+            .execute(
+                "INSERT INTO documents(path, content) VALUES ('/home/user/note.txt', NULL)",
+                [],
+            )
+            .unwrap();
+        drop(database);
+        let response = router(file.path().to_owned(), Some("Ubuntu".into()))
+            .oneshot(
+                Request::post("/api/open")
+                    .header(header::CONTENT_TYPE, "application/json")
+                    .body(Body::from(
+                        r#"{"path":"/home/user/note.txt","application":"unknown"}"#,
+                    ))
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+
+        assert_eq!(response.status(), StatusCode::BAD_REQUEST);
     }
 }
