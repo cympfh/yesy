@@ -1,6 +1,7 @@
 use std::{net::IpAddr, path::Path};
 
 use clap::{Parser, Subcommand};
+use indicatif::{ProgressBar, ProgressStyle};
 
 use crate::{
     config::{Config, database_path},
@@ -59,9 +60,20 @@ impl Cli {
 }
 
 fn update_database(path: &Path, config: &Config) -> anyhow::Result<()> {
-    println!("Updating database...");
     let mut database = Database::open(path)?;
-    let count = index::rebuild(&mut database.connection, config)?;
+    let progress = ProgressBar::new(0);
+    progress.set_style(
+        ProgressStyle::with_template(
+            "{spinner:.green} {msg} [{bar:40.cyan/blue}] {pos}/{len} files ({eta})",
+        )?
+        .progress_chars("=>-"),
+    );
+    progress.set_message("Updating database");
+    let count = index::rebuild_with_progress(&mut database.connection, config, |done, total| {
+        progress.set_length(total as u64);
+        progress.set_position(done as u64);
+    })?;
+    progress.finish_and_clear();
     println!("Indexed {count} files.");
     Ok(())
 }
