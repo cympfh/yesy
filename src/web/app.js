@@ -115,7 +115,7 @@ function render(data) {
       windowsRow.querySelector('.copy-path').dataset.path = result.windows_path;
       const openWith = item.querySelector('.open-with');
       openWith.hidden = false;
-      openWith.querySelector('select').dataset.path = result.path;
+      openWith.querySelector('.open-application').dataset.path = result.path;
     } else {
       windowsRow.remove();
     }
@@ -155,17 +155,17 @@ results.addEventListener('click', async (event) => {
   }
 });
 
-results.addEventListener('change', async (event) => {
-  const select = event.target.closest('.open-with select');
-  if (!select || !select.value) return;
-  const feedback = select.closest('.open-with').querySelector('.open-feedback');
-  select.disabled = true;
+results.addEventListener('click', async (event) => {
+  const button = event.target.closest('.open-application');
+  if (!button) return;
+  const feedback = button.closest('.open-with').querySelector('.open-feedback');
+  button.disabled = true;
   feedback.textContent = 'Opening...';
   try {
     const response = await fetch('/api/open', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ path: select.dataset.path, application: select.value }),
+      body: JSON.stringify({ path: button.dataset.path, application: button.dataset.application }),
     });
     const data = response.status === 204 ? null : await response.json();
     if (!response.ok) throw new Error(data?.error || 'The file could not be opened.');
@@ -173,8 +173,7 @@ results.addEventListener('change', async (event) => {
   } catch (error) {
     feedback.textContent = error.message;
   } finally {
-    select.value = '';
-    select.disabled = false;
+    button.disabled = false;
   }
 });
 
