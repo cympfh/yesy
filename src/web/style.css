@@ -279,11 +279,22 @@ code {
 }
 
 .open-with {
+  min-height: 32px;
+  margin-top: 8px;
+}
+
+.open-with-label {
+  display: block;
+  margin-bottom: 4px;
+  color: #4d596f;
+  font-size: 0.78rem;
+  font-weight: 650;
+}
+
+.open-with-actions {
   display: flex;
   align-items: center;
   gap: 8px;
-  min-height: 32px;
-  margin-top: 8px;
 }
 
 .open-with[hidden] { display: none; }
