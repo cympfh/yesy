@@ -23,6 +23,8 @@ enum Command {
         listen: IpAddr,
         #[arg(long, default_value_t = 8080)]
         port: u16,
+        #[arg(long)]
+        update: bool,
     },
     Update,
     Search {
@@ -36,8 +38,12 @@ impl Cli {
         let config = Config::load()?;
         let database_path = database_path()?;
         match self.command {
-            Command::Start { listen, port } => {
-                if !Database::exists(&database_path) {
+            Command::Start {
+                listen,
+                port,
+                update,
+            } => {
+                if update || !Database::exists(&database_path) {
                     update_database(&database_path, &config)?;
                 }
                 crate::web::serve(&database_path, listen, port).await?;
@@ -94,5 +100,14 @@ mod tests {
     #[test]
     fn requires_a_search_word() {
         assert!(Cli::try_parse_from(["yesy", "search"]).is_err());
+    }
+
+    #[test]
+    fn parses_start_with_update() {
+        let cli = Cli::try_parse_from(["yesy", "start", "--update"]).unwrap();
+        let Command::Start { update, .. } = cli.command else {
+            panic!("expected start command");
+        };
+        assert!(update);
     }
 }
