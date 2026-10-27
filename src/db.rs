@@ -19,6 +19,9 @@ pub struct Database {
 pub struct SearchResult {
     pub path: String,
     pub snippet: Option<String>,
+    pub size: i64,
+    pub created_ns: Option<i64>,
+    pub modified_ns: Option<i64>,
 }
 
 impl Database {
@@ -48,7 +51,8 @@ impl Database {
                 path TEXT NOT NULL UNIQUE,
                 content TEXT,
                 modified_ns INTEGER NOT NULL DEFAULT 0,
-                size INTEGER NOT NULL DEFAULT 0
+                size INTEGER NOT NULL DEFAULT 0,
+                created_ns INTEGER
             );
             CREATE VIRTUAL TABLE IF NOT EXISTS documents_fts USING fts5(
                 path,
@@ -90,6 +94,9 @@ impl Database {
                 [],
             )?;
         }
+        if !columns.iter().any(|column| column == "created_ns") {
+            connection.execute("ALTER TABLE documents ADD COLUMN created_ns INTEGER", [])?;
+        }
         Ok(Self { connection })
     }
 
@@ -111,7 +118,7 @@ impl Database {
                 .collect::<Vec<_>>()
                 .join(" AND ");
             let mut statement = self.connection.prepare(
-                "SELECT d.path, d.content
+                "SELECT d.path, d.content, d.size, d.created_ns, d.modified_ns
                  FROM documents_fts
                  JOIN documents d ON d.id = documents_fts.rowid
                  WHERE documents_fts MATCH ?1
@@ -119,14 +126,19 @@ impl Database {
                  LIMIT ?2",
             )?;
             let rows = statement.query_map(params![fts_query, limit], |row| {
-                Ok((row.get::<_, String>(0)?, row.get::<_, Option<String>>(1)?))
+                Ok(SearchResult {
+                    path: row.get(0)?,
+                    snippet: row
+                        .get::<_, Option<String>>(1)?
+                        .as_deref()
+                        .map(|text| snippet(text, &keywords)),
+                    size: row.get(2)?,
+                    created_ns: row.get(3)?,
+                    modified_ns: row.get(4)?,
+                })
             })?;
             for row in rows {
-                let (path, content) = row?;
-                results.push(SearchResult {
-                    path,
-                    snippet: content.as_deref().map(|text| snippet(text, &keywords)),
-                });
+                results.push(row?);
             }
         } else {
             let conditions = (1..=keywords.len())
@@ -136,7 +148,7 @@ impl Database {
                 .collect::<Vec<_>>()
                 .join(" AND ");
             let sql = format!(
-                "SELECT path, content FROM documents WHERE {conditions} ORDER BY path LIMIT ?{}",
+                "SELECT path, content, size, created_ns, modified_ns FROM documents WHERE {conditions} ORDER BY path LIMIT ?{}",
                 keywords.len() + 1
             );
             let mut values = keywords
@@ -146,14 +158,19 @@ impl Database {
             values.push(Value::Integer(limit));
             let mut statement = self.connection.prepare(&sql)?;
             let rows = statement.query_map(rusqlite::params_from_iter(values), |row| {
-                Ok((row.get::<_, String>(0)?, row.get::<_, Option<String>>(1)?))
+                Ok(SearchResult {
+                    path: row.get(0)?,
+                    snippet: row
+                        .get::<_, Option<String>>(1)?
+                        .as_deref()
+                        .map(|text| snippet(text, &keywords)),
+                    size: row.get(2)?,
+                    created_ns: row.get(3)?,
+                    modified_ns: row.get(4)?,
+                })
             })?;
             for row in rows {
-                let (path, content) = row?;
-                results.push(SearchResult {
-                    path,
-                    snippet: content.as_deref().map(|text| snippet(text, &keywords)),
-                });
+                results.push(row?);
             }
         }
         Ok(results)

@@ -76,12 +76,38 @@ function fileName(path) {
   return path.split('/').filter(Boolean).pop() || path;
 }
 
+function formatFileSize(bytes) {
+  if (!Number.isFinite(bytes) || bytes < 0) return 'Unknown';
+  const units = ['B', 'KB', 'MB', 'GB', 'TB'];
+  let value = bytes;
+  let unit = 0;
+  while (value >= 1000 && unit < units.length - 1) {
+    value /= 1000;
+    unit += 1;
+  }
+  const digits = unit === 0 || value >= 10 ? 0 : 1;
+  return `${value.toFixed(digits)} ${units[unit]}`;
+}
+
+function formatFileTime(nanoseconds) {
+  if (!Number.isFinite(nanoseconds)) return 'Unknown';
+  const date = new Date(nanoseconds / 1_000_000);
+  if (Number.isNaN(date.getTime())) return 'Unknown';
+  return new Intl.DateTimeFormat(undefined, {
+    dateStyle: 'medium',
+    timeStyle: 'medium',
+  }).format(date);
+}
+
 function render(data) {
   results.replaceChildren();
   for (const result of data.results) {
     const item = template.content.cloneNode(true);
     const name = fileName(result.path);
     appendHighlightedText(item.querySelector('h2'), name, data.query);
+    item.querySelector('.file-size').textContent = formatFileSize(result.size);
+    item.querySelector('.file-created').textContent = formatFileTime(result.created_ns);
+    item.querySelector('.file-modified').textContent = formatFileTime(result.modified_ns);
     const preview = item.querySelector('.image-preview');
     if (result.image_url) {
       preview.src = result.image_url;
