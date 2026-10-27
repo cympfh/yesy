@@ -216,25 +216,30 @@ async fn open_with(
     Json(request): Json<OpenRequest>,
 ) -> Result<StatusCode, (StatusCode, Json<ErrorResponse>)> {
     ensure_indexed(&state, &request.path)?;
-    if request.application != "neeview" {
-        return Err(bad_request("The application is not supported".into()));
-    }
     let distro = state
         .wsl_distro
         .as_deref()
-        .ok_or_else(|| bad_request("NeeViewer is only available from WSL".into()))?;
+        .ok_or_else(|| bad_request("Open with is only available from WSL".into()))?;
     let path = windows_path(Path::new(&request.path), distro)
-        .ok_or_else(|| bad_request("The path cannot be opened by NeeViewer".into()))?;
-    neeview_command(&path)
+        .ok_or_else(|| bad_request("The path cannot be opened".into()))?;
+    application_command(&request.application, &path)?
         .spawn()
-        .map_err(|_| internal_error("NeeViewer could not be started".into()))?;
+        .map_err(|_| internal_error("The application could not be started".into()))?;
     Ok(StatusCode::NO_CONTENT)
 }
 
-fn neeview_command(path: &str) -> Command {
-    let mut command = Command::new("NeeView.exe");
+fn application_command(
+    application: &str,
+    path: &str,
+) -> Result<Command, (StatusCode, Json<ErrorResponse>)> {
+    let program = match application {
+        "neeview" => "NeeView.exe",
+        "zed" => "zed.exe",
+        _ => return Err(bad_request("The application is not supported".into())),
+    };
+    let mut command = Command::new(program);
     command.arg(path);
-    command
+    Ok(command)
 }
 
 async fn archive_image(
@@ -639,11 +644,22 @@ mod tests {
 
     #[test]
     fn builds_a_neeview_command_with_the_windows_path_as_one_argument() {
-        let command = neeview_command(r"C:\Users\user\My Pictures\book.zip");
+        let command =
+            application_command("neeview", r"C:\Users\user\My Pictures\book.zip").unwrap();
         assert_eq!(command.get_program(), "NeeView.exe");
         assert_eq!(
             command.get_args().collect::<Vec<_>>(),
             [r"C:\Users\user\My Pictures\book.zip"]
+        );
+    }
+
+    #[test]
+    fn builds_a_zed_command_with_the_windows_path_as_one_argument() {
+        let command = application_command("zed", r"C:\Users\user\My Project\notes.txt").unwrap();
+        assert_eq!(command.get_program(), "zed.exe");
+        assert_eq!(
+            command.get_args().collect::<Vec<_>>(),
+            [r"C:\Users\user\My Project\notes.txt"]
         );
     }
 

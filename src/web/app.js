@@ -115,7 +115,9 @@ function render(data) {
       windowsRow.querySelector('.copy-path').dataset.path = result.windows_path;
       const openWith = item.querySelector('.open-with');
       openWith.hidden = false;
-      openWith.querySelector('.open-application').dataset.path = result.path;
+      for (const button of openWith.querySelectorAll('.open-application')) {
+        button.dataset.path = result.path;
+      }
     } else {
       windowsRow.remove();
     }
